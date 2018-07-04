@@ -11,8 +11,8 @@ set BuildFlags=/FC /fp:fast /GL /GR- /Gw /nologo /Oi
 set DebugFlags=/Od /Zi
 set OptimizedFlags=/O2
 
-set CompilerFlags=%BuildFlags% %DebugFlags% %WarningFlags% %OptionFlags%
-REM set CompilerFlags=%BuildFlags% %OptimizedFlags% %WarningFlags% %OptionFlags%
+REM set CompilerFlags=%BuildFlags% %DebugFlags% %WarningFlags% %OptionFlags%
+set CompilerFlags=%BuildFlags% %OptimizedFlags% %WarningFlags% %OptionFlags%
 
 IF NOT EXIST ..\build mkdir ..\build
 pushd ..\build

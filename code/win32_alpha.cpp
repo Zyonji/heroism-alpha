@@ -40,10 +40,10 @@ struct game_tile
 {
     r32 Hostility;
     r32 Volatility;
-    r32 LeftSpread;
-    r32 RightSpread;
-    r32 UpSpread;
-    r32 DownSpread;
+    r32 X;
+    r32 Y;
+    r32 Pull;
+    r32 Strenght;
 };
 
 struct game_room
@@ -237,16 +237,16 @@ SetStage(game_state *GameState)
             {
                 Tile->Volatility = 1.0;
             }
-            r32 Spread = 2.0f * (r32)0x10000;
-            r32 Shift = 0.25f * (r32)0x10000;
+            r32 Full = (r32)0x10000;
+            r32 Half = 0.5f * Full;
             
-            Tile->LeftSpread = ((r32)(Random & 0x10000) + Shift) / Spread;
+            Tile->X = ((r32)(Random & 0x10000) - Half) / Half;
             Random = AdvanceRandomNumber(Random);
-            Tile->RightSpread = ((r32)(Random & 0x10000) + Shift) / Spread;
+            Tile->Y = ((r32)(Random & 0x10000) - Half) / Half;
             Random = AdvanceRandomNumber(Random);
-            Tile->UpSpread = ((r32)(Random & 0x10000) + Shift) / Spread;
+            Tile->Pull = 0.8f + 0.2f * ((r32)(Random & 0x10000)) / Full;
             Random = AdvanceRandomNumber(Random);
-            Tile->DownSpread = ((r32)(Random & 0x10000) + Shift) / Spread;
+            Tile->Strenght = 0.5f * ((r32)(Random & 0x10000) + Half) / Full;
             Random = AdvanceRandomNumber(Random);
             
             ++Tile;
@@ -277,8 +277,8 @@ SetStage(game_state *GameState)
     RedrawRoom(GameState);
 }
 
-internal void
-AddToTileHostility(game_tile *Tiles, i32 Width, i32 Height, i32 X, i32 Y, r32 Hostility)
+internal game_tile*
+GetTile(game_tile *Tiles, i32 Width, i32 Height, i32 X, i32 Y)
 {
     i32 WrappedX = X;
     if(WrappedX < 0)
@@ -291,6 +291,13 @@ AddToTileHostility(game_tile *Tiles, i32 Width, i32 Height, i32 X, i32 Y, r32 Ho
     if(WrappedY >= Height)
         WrappedY -= Height;
     game_tile *Tile = Tiles + WrappedY * Width + WrappedX;
+    return Tile;
+}
+
+internal void
+AddToTileHostility(game_tile *Tiles, i32 Width, i32 Height, i32 X, i32 Y, r32 Hostility)
+{
+    game_tile *Tile = GetTile(Tiles, Width, Height, X, Y);
     Tile->Hostility += Hostility * Tile->Volatility;
     Tile->Volatility += 0.05f * Hostility;
     if(Tile->Volatility > 1.0f)
@@ -529,12 +536,43 @@ WinMain(HINSTANCE Instance,
                         {
                             Tile->Hostility *= 0.1f;
                         }
-                        r32 HostileDelta = Tile->Hostility * DesiredSecondsPerFrame;
-                        AddToTileHostility(Tiles, Width, Height, X + 1, Y + 0, Tile->LeftSpread * HostileDelta);
-                        AddToTileHostility(Tiles, Width, Height, X - 1, Y + 0, Tile->RightSpread * HostileDelta);
-                        AddToTileHostility(Tiles, Width, Height, X + 0, Y + 1, Tile->UpSpread * HostileDelta);
-                        AddToTileHostility(Tiles, Width, Height, X + 0, Y - 1, Tile->DownSpread * HostileDelta);
-                        Tile->Hostility -= 0.9f * HostileDelta * (Tile->LeftSpread + Tile->RightSpread + Tile->UpSpread + Tile->DownSpread);
+                        
+                        r32 HostileDelta = Tile->Hostility * Tile->Strenght * DesiredSecondsPerFrame;
+                        r32 Loss = 0.0;
+                        if(Tile->X > 0)
+                        {
+                            AddToTileHostility(Tiles, Width, Height, X + 1, Y, Tile->X * HostileDelta);
+                            Loss += Tile->X;
+                        }
+                        else
+                        {
+                            AddToTileHostility(Tiles, Width, Height, X - 1, Y, -Tile->X * HostileDelta);
+                            Loss -= Tile->X;
+                        }
+                        if(Tile->Y > 0)
+                        {
+                            AddToTileHostility(Tiles, Width, Height, X, Y + 1, Tile->Y * HostileDelta);
+                            Loss += Tile->Y;
+                        }
+                        else
+                        {
+                            AddToTileHostility(Tiles, Width, Height, X, Y - 1, -Tile->Y * HostileDelta);
+                            Loss -= Tile->Y;
+                        }
+                        game_tile *LeftTile = GetTile(Tiles, Width, Height, X - 1, Y);
+                        game_tile *RightTile = GetTile(Tiles, Width, Height, X + 1, Y);
+                        Tile->X -= (RightTile->Pull * RightTile->Hostility - LeftTile->Pull * LeftTile->Hostility) * DesiredSecondsPerFrame;
+                        game_tile *DownTile = GetTile(Tiles, Width, Height, X, Y - 1);
+                        game_tile *UpTile = GetTile(Tiles, Width, Height, X, Y + 1);
+                        Tile->Y -= (UpTile->Pull * UpTile->Hostility - DownTile->Pull * DownTile->Hostility) * DesiredSecondsPerFrame;
+                        
+                        Tile->Hostility -= 0.9f * HostileDelta * Loss;
+                        if(Loss > 1.0f)
+                        {
+                            Loss = 0.5f * (Loss - 1.0f) + 1.0f;
+                            Tile->X /= Loss;
+                            Tile->Y /= Loss;
+                        }
                         ++Tile;
                     }
                     
