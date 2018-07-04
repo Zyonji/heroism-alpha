@@ -1,0 +1,5 @@
+extensions=".c.cpp.h.hpp.cc";
+
+fkey_command_win[1] = {"build.bat", "*compilation*", true};
+fkey_command_win[2] = {"run.bat", "*testing*", true};
+fkey_command_win[5] = {"debug.bat", "*debugging*", true};
