@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include <stdio.h>
+
 #define internal static
 #define local_persist static
 #define global_variable static
@@ -37,7 +39,7 @@ struct win32_offscreen_buffer
 struct game_tile
 {
     r32 Hostility;
-    r32 Stability;
+    r32 Volatility;
     r32 LeftSpread;
     r32 RightSpread;
     r32 UpSpread;
@@ -57,6 +59,7 @@ struct game_state
     u32 Seed;
     i32 X;
     i32 Y;
+    r32 Health;
     game_room Room;
     win32_offscreen_buffer Buffer;
 };
@@ -159,14 +162,19 @@ RedrawRoom(game_state *GameState)
                 }
                 else
                 {
-                    *Pixel++ = 0x008F8F8F;
+                    i32 Green = (i32)(GameState->Health * 256.0);
+                    if(Green < 0)
+                        Green= 0;
+                    if(Green > 255)
+                        Green= 255;
+                    *Pixel++ = Green << 8;
                 }
             }
             else
             {
                 game_tile *Tile = GetTile(GameState, TileX, TileY);
-                u32 Red = (u32)(Tile->Hostility * 256.0);
-                u32 Blue = (u32)(Tile->Stability * 256.0);
+                i32 Red = (i32)(Tile->Hostility * 256.0);
+                i32 Blue = 255 - (i32)(Tile->Volatility * 256.0);
                 if(Red < 0)
                     Red = 0;
                 if(Red > 255)
@@ -196,16 +204,14 @@ RedrawRoom(game_state *GameState)
 internal void
 SetStage(game_state *GameState)
 {
-    i32 Height = 64;
-    i32 Width = 64;
+    game_room *Room = &GameState->Room;
+    i32 Height = Room->Height;
+    i32 Width = Room->Width;
     i32 CenterX = Width / 2;
     i32 CenterY = Height / 2;
     GameState->X = CenterX;
     GameState->Y = CenterY;
     
-    game_room *Room = &GameState->Room;
-    Room->Height = Height;
-    Room->Width = Width;
     Room->Tiles = (game_tile *)(GameState + 1);
     
     u32 Random = AdvanceRandomNumber(GameState->Seed);
@@ -225,21 +231,22 @@ SetStage(game_state *GameState)
             Tile->Hostility =  RelativeX * RelativeX + RelativeY * RelativeY;
             if(X == CenterX && Y == CenterY)
             {
-                Tile->Stability = 1.0;
+                Tile->Volatility = 0.0;
             }
             else
             {
-                Tile->Stability = 0.0;
+                Tile->Volatility = 1.0;
             }
-            r32 Spread = 0.5f * (r32)0x10000;
-            r32 Shift = 0.5f * Spread;
-            Tile->LeftSpread = ((r32)(Random & 0x10000) - Shift) / Spread;
+            r32 Spread = 2.0f * (r32)0x10000;
+            r32 Shift = 0.25f * (r32)0x10000;
+            
+            Tile->LeftSpread = ((r32)(Random & 0x10000) + Shift) / Spread;
             Random = AdvanceRandomNumber(Random);
-            Tile->RightSpread = ((r32)(Random & 0x10000) - Shift) / Spread;
+            Tile->RightSpread = ((r32)(Random & 0x10000) + Shift) / Spread;
             Random = AdvanceRandomNumber(Random);
-            Tile->UpSpread = ((r32)(Random & 0x10000) - Shift) / Spread;
+            Tile->UpSpread = ((r32)(Random & 0x10000) + Shift) / Spread;
             Random = AdvanceRandomNumber(Random);
-            Tile->DownSpread = ((r32)(Random & 0x10000) - Shift) / Spread;
+            Tile->DownSpread = ((r32)(Random & 0x10000) + Shift) / Spread;
             Random = AdvanceRandomNumber(Random);
             
             ++Tile;
@@ -268,6 +275,26 @@ SetStage(game_state *GameState)
     Buffer->Info.bmiHeader.biCompression = BI_RGB;
     
     RedrawRoom(GameState);
+}
+
+internal void
+AddToTileHostility(game_tile *Tiles, i32 Width, i32 Height, i32 X, i32 Y, r32 Hostility)
+{
+    i32 WrappedX = X;
+    if(WrappedX < 0)
+        WrappedX += Width;
+    if(WrappedX >= Width)
+        WrappedX -= Width;
+    i32 WrappedY = Y;
+    if(WrappedY < 0)
+        WrappedY += Height;
+    if(WrappedY >= Height)
+        WrappedY -= Height;
+    game_tile *Tile = Tiles + WrappedY * Width + WrappedX;
+    Tile->Hostility += Hostility * Tile->Volatility;
+    Tile->Volatility += 0.05f * Hostility;
+    if(Tile->Volatility > 1.0f)
+        Tile->Volatility = 1.0f;
 }
 
 internal void
@@ -379,19 +406,48 @@ Win32MainWindowCallback(HWND Window,
     return(Result);
 }
 
+inline LARGE_INTEGER
+Win32GetAbsoluteTime(void)
+{    
+    LARGE_INTEGER Result;
+    QueryPerformanceCounter(&Result);
+    return(Result);
+}
+
+global_variable i64 GlobalPerfCountFrequency;
+inline r32
+Win32GetSecondsElapsed(LARGE_INTEGER Start, LARGE_INTEGER End)
+{
+    r32 Result = ((r32)(End.QuadPart - Start.QuadPart) /
+                  (r32)GlobalPerfCountFrequency);
+    return(Result);
+}
+
 int CALLBACK
 WinMain(HINSTANCE Instance,
         HINSTANCE PrevInstance,
         LPSTR CommandLine,
         int ShowCode)
 {
-    int MemorySize = sizeof(*GlobalGameState) + 15000 * sizeof(*GlobalGameState->Room.Tiles) + 601 * 901 * 4;
+    LARGE_INTEGER PerfCountFrequencyResult;
+    QueryPerformanceFrequency(&PerfCountFrequencyResult);
+    GlobalPerfCountFrequency = PerfCountFrequencyResult.QuadPart;
+    
+    b32 SleepIsGranular = (timeBeginPeriod(1) == TIMERR_NOERROR);
+    
+    i32 Height = 64;
+    i32 Width = 64;
+    int MemorySize = sizeof(*GlobalGameState) + (4 * 6 * 6 + sizeof(*GlobalGameState->Room.Tiles)) * (Height + 1) * (Width + 1) + 15;
     void *Memory = VirtualAlloc(0, MemorySize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
     GlobalGameState = (game_state *)Memory;
     GlobalGameState->Running = true;
-    GlobalGameState->Seed = 4223;
+    GlobalGameState->Seed = 420023;
+    GlobalGameState->Health = 1.0f;
+    GlobalGameState->Room.Height = Height;
+    GlobalGameState->Room.Width = Width;
     
     SetStage(GlobalGameState);
+    game_tile *Tiles = GlobalGameState->Room.Tiles;
     
     WNDCLASS WindowClass = {};
     
@@ -420,20 +476,91 @@ WinMain(HINSTANCE Instance,
         if(Window)
         {
             UpdateWindow(Window);
-            BOOL MessageResult;
             MSG Message;
             
-            while(GlobalGameState->Running && (MessageResult = GetMessageA(&Message, 0, 0, 0)))
+            LARGE_INTEGER LastCounter = Win32GetAbsoluteTime();
+            r32 DesiredSecondsPerFrame = 1.0 / 30.0;
+            
+            while(GlobalGameState->Running)
             {
-                if(MessageResult > 0)
+                while(PeekMessage(&Message, 0, 0, 0, PM_REMOVE))
                 {
-                    TranslateMessage(&Message);
-                    DispatchMessageA(&Message);
+                    if(Message.message == WM_QUIT)
+                    {
+                        GlobalGameState->Running= false;
+                    }
+                    else
+                    {
+                        TranslateMessage(&Message);
+                        DispatchMessageA(&Message);
+                    }
                 }
-                else
+                // NOTE(Zyonji): Game logic.
+                game_tile *Location = Tiles + GlobalGameState->Y * Width + GlobalGameState->X;
+                GlobalGameState->Health += (0.25f - 0.25f * Location->Volatility - Location->Hostility) * DesiredSecondsPerFrame;
+                if(GlobalGameState->Health < 0.0f)
                 {
-                    GlobalGameState->Running= false;
+                    MessageBoxA(0, "You died.", 0, MB_OK|MB_ICONERROR);
+                    GlobalGameState->Running = false;
                 }
+                if(GlobalGameState->Health > 1.0f)
+                {
+                    GlobalGameState->Health = 1.0f;
+                }
+                Location->Volatility -= 0.5f * DesiredSecondsPerFrame;
+                if(Location->Volatility < 0.0f)
+                    Location->Volatility = 0.0f;
+                
+                game_tile *TileRow = Tiles;
+                for(i32 Y = 0;
+                    Y < Height;
+                    ++Y)
+                {
+                    game_tile *Tile = TileRow;
+                    for(i32 X = 0;
+                        X < Width;
+                        ++X)
+                    {
+                        if(Tile->Hostility > 1.0f)
+                        {
+                            Tile->Hostility = 0.5f * (Tile->Hostility - 1.0f) + 1.0f;
+                        }
+                        if(Tile->Hostility < 0.0f)
+                        {
+                            Tile->Hostility *= 0.1f;
+                        }
+                        r32 HostileDelta = Tile->Hostility * DesiredSecondsPerFrame;
+                        AddToTileHostility(Tiles, Width, Height, X + 1, Y + 0, Tile->LeftSpread * HostileDelta);
+                        AddToTileHostility(Tiles, Width, Height, X - 1, Y + 0, Tile->RightSpread * HostileDelta);
+                        AddToTileHostility(Tiles, Width, Height, X + 0, Y + 1, Tile->UpSpread * HostileDelta);
+                        AddToTileHostility(Tiles, Width, Height, X + 0, Y - 1, Tile->DownSpread * HostileDelta);
+                        Tile->Hostility -= 0.9f * HostileDelta * (Tile->LeftSpread + Tile->RightSpread + Tile->UpSpread + Tile->DownSpread);
+                        ++Tile;
+                    }
+                    
+                    TileRow += Width;
+                }
+                // TODO(Zyonji): Wait to get stable framerate.
+                r32 SecondsElapsedForFrame = Win32GetSecondsElapsed(LastCounter, Win32GetAbsoluteTime());
+                if(SecondsElapsedForFrame < DesiredSecondsPerFrame)
+                {                        
+                    if(SleepIsGranular)
+                    {
+                        DWORD SleepMS = (DWORD)(1000.0f * (DesiredSecondsPerFrame - SecondsElapsedForFrame));
+                        if(SleepMS > 0)
+                        {
+                            Sleep(SleepMS);
+                        }
+                    }
+                    while(SecondsElapsedForFrame < DesiredSecondsPerFrame)
+                    {                            
+                        SecondsElapsedForFrame = Win32GetSecondsElapsed(LastCounter, Win32GetAbsoluteTime());
+                    }
+                }
+                LastCounter = Win32GetAbsoluteTime();
+                // NOTE(Zyonji): Render frame.
+                RedrawRoom(GlobalGameState);
+                RedrawWindow(Window, 0, 0, RDW_INVALIDATE);
             }
         }
         else

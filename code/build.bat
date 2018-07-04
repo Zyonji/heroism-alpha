@@ -5,7 +5,7 @@ CD /D %~dp0
 set WarningFlags=/W4 /wd4100 /wd4201 /wd4505 /wd4706 /WX
 set OptionFlags=-DCOMPILE_WIN32=1
 
-set LinkerFlags=/link /INCREMENTAL:NO /OPT:REF user32.lib Gdi32.lib
+set LinkerFlags=/link /INCREMENTAL:NO /OPT:REF user32.lib Gdi32.lib Winmm.lib
 
 set BuildFlags=/FC /fp:fast /GL /GR- /Gw /nologo /Oi
 set DebugFlags=/Od /Zi
